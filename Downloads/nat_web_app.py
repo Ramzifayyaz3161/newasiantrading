@@ -2725,10 +2725,22 @@ def catalog():
                     flash(f'Import failed: {e}', 'error')
         return redirect(url_for('catalog'))
 
-    q_str = request.args.get('q','').lower()
-    items = CatalogItem.query.filter_by(active=True).order_by(CatalogItem.name).all()
+    q_str    = request.args.get('q','').lower()
+    per_page = int(request.args.get('per_page', 100))
+    if per_page not in (50,100,200,500): per_page = 100
+    page     = max(1, int(request.args.get('page', 1)))
+
+    q_obj = CatalogItem.query.filter_by(active=True).order_by(CatalogItem.name)
     if q_str:
-        items = [i for i in items if q_str in (i.name+(i.spec or '')+(i.category or '')+'').lower()]
+        q_obj = q_obj.filter(db.or_(
+            CatalogItem.name.ilike(f'%{q_str}%'),
+            CatalogItem.spec.ilike(f'%{q_str}%'),
+            CatalogItem.category.ilike(f'%{q_str}%'),
+        ))
+    total_items = q_obj.count()
+    total_pages = max(1, -(-total_items // per_page))
+    page        = min(page, total_pages)
+    items       = q_obj.offset((page-1)*per_page).limit(per_page).all()
 
     is_admin = session.get('user_role') == 'admin'
     rows = ''.join(f'''<tr>
@@ -2779,13 +2791,32 @@ def catalog():
       </tr>''' for i in items) or \
       '<tr><td colspan="9" style="text-align:center;color:#999;padding:20px">No items yet.</td></tr>'
 
+    def _pg_url_cat(p, pp=per_page):
+        return f"/catalog?q={request.args.get('q','')}&page={p}&per_page={pp}"
+
+    pg_controls_cat = f'''
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <span style="font-size:12px;color:#666">Show:
+      {''.join(f'<a href="{_pg_url_cat(1,n)}" class="btn btn-sm {"btn-primary" if per_page==n else "btn-outline"}">{n}</a>' for n in [50,100,200,500])}
+    </span>
+    <span style="font-size:12px;color:#666;margin-left:10px">
+      Page {page} of {total_pages} &nbsp;
+      {'<a href="'+_pg_url_cat(1)+'" class="btn btn-sm btn-outline">«</a>' if page>1 else ''}
+      {'<a href="'+_pg_url_cat(page-1)+'" class="btn btn-sm btn-outline">‹</a>' if page>1 else ''}
+      {''.join(f'<a href="{_pg_url_cat(p)}" class="btn btn-sm {"btn-primary" if p==page else "btn-outline"}">{p}</a>' for p in range(max(1,page-2), min(total_pages+1,page+3)))}
+      {'<a href="'+_pg_url_cat(page+1)+'" class="btn btn-sm btn-outline">›</a>' if page<total_pages else ''}
+      {'<a href="'+_pg_url_cat(total_pages)+'" class="btn btn-sm btn-outline">»</a>' if page<total_pages else ''}
+    </span>
+  </div>'''
+
     content = f'''<div class="card">
-  <h2>Items Catalog ({len(items)} items)</h2>
+  <h2>Items Catalog ({total_items} items)</h2>
   <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
     <form method="GET" style="display:flex;gap:6px">
       <input type="text" name="q" value="{request.args.get('q','')}"
              placeholder="Search item, spec, category..."
              style="padding:7px 11px;border:1px solid #ddd;border-radius:6px;font-size:12px;width:220px">
+      <input type="hidden" name="per_page" value="{per_page}">
       <button type="submit" class="btn btn-primary btn-sm">Search</button>
     </form>
     <button onclick="document.getElementById('add-item').style.display='block'"
@@ -2794,6 +2825,7 @@ def catalog():
             class="btn btn-info btn-sm">⬆ Import CSV</button>
     <a href="/catalog/template" class="btn btn-outline btn-sm">⬇ Template</a>
   </div>
+  {pg_controls_cat}
 
   <div id="add-item" style="display:none;background:#f8f9ff;border:1px solid #dce0f0;
        border-radius:8px;padding:16px;margin-bottom:14px">
@@ -2843,6 +2875,7 @@ def catalog():
     <th>Category</th><th>Vendors</th>
     <th>Cost Price</th><th>Markup</th><th>Sell Price</th><th>Actions</th>
   </tr></thead><tbody>{rows}</tbody></table>
+  {pg_controls_cat}
 </div>'''
     return base_page(content, 'catalog', 'Items Catalog')
 
@@ -3217,11 +3250,23 @@ def vendors():
                     flash(f'Import failed: {e}', 'error')
         return redirect(url_for('vendors'))
 
-    q_str = request.args.get('q','').lower()
-    all_vendors = Vendor.query.order_by(Vendor.name).all()
+    q_str    = request.args.get('q','').lower()
+    per_page = int(request.args.get('per_page', 100))
+    if per_page not in (50,100,200,500): per_page = 100
+    page     = max(1, int(request.args.get('page', 1)))
+
+    q_obj = Vendor.query.order_by(Vendor.name)
     if q_str:
-        all_vendors = [v for v in all_vendors
-                       if q_str in (v.name+(v.email or '')+(v.phone or '')+(v.products or '')+'').lower()]
+        q_obj = q_obj.filter(db.or_(
+            Vendor.name.ilike(f'%{q_str}%'),
+            Vendor.email.ilike(f'%{q_str}%'),
+            Vendor.phone.ilike(f'%{q_str}%'),
+            Vendor.products.ilike(f'%{q_str}%'),
+        ))
+    total_vendors = q_obj.count()
+    total_pages   = max(1, -(-total_vendors // per_page))
+    page          = min(page, total_pages)
+    all_vendors   = q_obj.offset((page-1)*per_page).limit(per_page).all()
 
     def _d(val):
         if not val: return '-'
@@ -3270,13 +3315,32 @@ def vendors():
     if not all_vendors:
         rows = '<tr><td colspan="6" style="text-align:center;color:#999;padding:20px">No vendors found.</td></tr>'
 
+    def _pg_url_ven(p, pp=per_page):
+        return f"/vendors?q={request.args.get('q','')}&page={p}&per_page={pp}"
+
+    pg_controls_ven = f'''
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <span style="font-size:12px;color:#666">Show:
+      {''.join(f'<a href="{_pg_url_ven(1,n)}" class="btn btn-sm {"btn-primary" if per_page==n else "btn-outline"}">{n}</a>' for n in [50,100,200,500])}
+    </span>
+    <span style="font-size:12px;color:#666;margin-left:10px">
+      Page {page} of {total_pages} &nbsp;
+      {'<a href="'+_pg_url_ven(1)+'" class="btn btn-sm btn-outline">«</a>' if page>1 else ''}
+      {'<a href="'+_pg_url_ven(page-1)+'" class="btn btn-sm btn-outline">‹</a>' if page>1 else ''}
+      {''.join(f'<a href="{_pg_url_ven(p)}" class="btn btn-sm {"btn-primary" if p==page else "btn-outline"}">{p}</a>' for p in range(max(1,page-2), min(total_pages+1,page+3)))}
+      {'<a href="'+_pg_url_ven(page+1)+'" class="btn btn-sm btn-outline">›</a>' if page<total_pages else ''}
+      {'<a href="'+_pg_url_ven(total_pages)+'" class="btn btn-sm btn-outline">»</a>' if page<total_pages else ''}
+    </span>
+  </div>'''
+
     content = f'''<div class="card">
-  <h2>Vendor Directory ({len(all_vendors)} vendors)</h2>
+  <h2>Vendor Directory ({total_vendors} vendors)</h2>
   <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
     <form method="GET" style="display:flex;gap:6px">
       <input type="text" name="q" value="{request.args.get('q','')}"
              placeholder="Search name, phone, products..."
              style="padding:7px 11px;border:1px solid #ddd;border-radius:6px;font-size:12px;width:220px">
+      <input type="hidden" name="per_page" value="{per_page}">
       <button type="submit" class="btn btn-primary btn-sm">Search</button>
     </form>
     <button onclick="document.getElementById('add-vendor').style.display='block'"
@@ -3284,8 +3348,9 @@ def vendors():
     <button onclick="document.getElementById('import-vendor').style.display='block'"
             class="btn btn-info btn-sm">⬆ Import</button>
     <a href="/vendors/template" class="btn btn-outline btn-sm">⬇ Template</a>
-    {f'<form method="POST" style="display:inline"><input type="hidden" name="action" value="clear_all"><button type="submit" class="btn btn-sm btn-danger" onclick="return confirm(\'Delete ALL {len(all_vendors)} vendors?\')">🗑 Clear All</button></form>' if is_admin and all_vendors else ""}
+    {f'<form method="POST" style="display:inline"><input type="hidden" name="action" value="clear_all"><button type="submit" class="btn btn-sm btn-danger" onclick="return confirm(\'Delete ALL {total_vendors} vendors?\')">🗑 Clear All</button></form>' if is_admin and all_vendors else ""}
   </div>
+  {pg_controls_ven}
   <div id="add-vendor" style="display:none;background:#f8f9ff;border:1px solid #dce0f0;border-radius:8px;padding:16px;margin-bottom:14px">
     <form method="POST"><input type="hidden" name="action" value="add">
       <div class="grid3">
@@ -3315,6 +3380,7 @@ def vendors():
   <table><thead><tr><th>Vendor</th><th>Contact</th><th>Phone</th>
     <th>Email</th><th>Products</th><th>Actions</th></tr></thead>
   <tbody>{rows}</tbody></table>
+  {pg_controls_ven}
 </div>'''
     return base_page(content, 'vendors', 'Vendors')
 
@@ -3417,13 +3483,24 @@ def contacts():
             flash('Contact added.', 'success')
         return redirect(url_for('contacts'))
 
-    q_str = request.args.get('q','').lower()
-    contacts_list = Contact.query.order_by(Contact.count.desc()).limit(1000).all()
+    q_str    = request.args.get('q','').lower()
+    per_page = int(request.args.get('per_page', 100))
+    if per_page not in (50,100,200,500): per_page = 100
+    page     = max(1, int(request.args.get('page', 1)))
+
+    q_obj = Contact.query.order_by(Contact.count.desc())
     if q_str:
-        contacts_list = [c for c in contacts_list
-                    if q_str in (c.name+(c.email or '')+(c.phone or '')+(c.company or '')+'').lower()]
+        q_obj = q_obj.filter(db.or_(
+            Contact.name.ilike(f'%{q_str}%'),
+            Contact.email.ilike(f'%{q_str}%'),
+            Contact.phone.ilike(f'%{q_str}%'),
+            Contact.company.ilike(f'%{q_str}%'),
+        ))
+    total_count   = q_obj.count()
+    total_pages   = max(1, -(-total_count // per_page))
+    page          = min(page, total_pages)
+    contacts_list = q_obj.offset((page-1)*per_page).limit(per_page).all()
     is_admin = session.get('user_role') == 'admin'
-    total_count = Contact.query.count()
     rows = ''.join(f'''<tr>
       <td><strong>{c.name}</strong></td>
       <td style="font-size:11px">{c.company or "-"}</td>
@@ -3436,13 +3513,32 @@ def contacts():
       </td></tr>''' for c in contacts_list) or \
       '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px">No contacts loaded yet.</td></tr>'
 
+    def _pg_url_con(p, pp=per_page):
+        return f"/contacts?q={request.args.get('q','')}&page={p}&per_page={pp}"
+
+    pg_controls_con = f'''
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <span style="font-size:12px;color:#666">Show:
+      {''.join(f'<a href="{_pg_url_con(1,n)}" class="btn btn-sm {"btn-primary" if per_page==n else "btn-outline"}">{n}</a>' for n in [50,100,200,500])}
+    </span>
+    <span style="font-size:12px;color:#666;margin-left:10px">
+      Page {page} of {total_pages} &nbsp;
+      {'<a href="'+_pg_url_con(1)+'" class="btn btn-sm btn-outline">«</a>' if page>1 else ''}
+      {'<a href="'+_pg_url_con(page-1)+'" class="btn btn-sm btn-outline">‹</a>' if page>1 else ''}
+      {''.join(f'<a href="{_pg_url_con(p)}" class="btn btn-sm {"btn-primary" if p==page else "btn-outline"}">{p}</a>' for p in range(max(1,page-2), min(total_pages+1,page+3)))}
+      {'<a href="'+_pg_url_con(page+1)+'" class="btn btn-sm btn-outline">›</a>' if page<total_pages else ''}
+      {'<a href="'+_pg_url_con(total_pages)+'" class="btn btn-sm btn-outline">»</a>' if page<total_pages else ''}
+    </span>
+  </div>'''
+
     content = f'''<div class="card">
-  <h2>Contacts ({len(contacts_list)} shown of {total_count})</h2>
+  <h2>Contacts ({total_count} total)</h2>
   <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
     <form method="GET" style="display:flex;gap:6px">
       <input type="text" name="q" value="{request.args.get('q','')}"
              placeholder="Search name, email, phone..."
              style="max-width:300px;padding:7px 11px;border:1px solid #ddd;border-radius:6px;font-size:12px">
+      <input type="hidden" name="per_page" value="{per_page}">
       <button type="submit" class="btn btn-primary btn-sm">Search</button>
     </form>
     <button onclick="document.getElementById('add-contact').style.display='block'"
@@ -3451,6 +3547,7 @@ def contacts():
             class="btn btn-info btn-sm">⬆ Import</button>
     {f'<form method="POST" style="display:inline"><input type="hidden" name="action" value="clear_all"><button type="submit" class="btn btn-sm btn-danger" onclick="return confirm(\'Delete ALL {total_count} contacts?\')">🗑 Clear All</button></form>' if is_admin and total_count > 0 else ""}
   </div>
+  {pg_controls_con}
   <div id="add-contact" style="display:none;background:#f8f9ff;border:1px solid #dce0f0;border-radius:8px;padding:16px;margin-bottom:14px">
     <form method="POST"><input type="hidden" name="action" value="add">
       <div class="grid3">
@@ -3478,6 +3575,7 @@ def contacts():
   <table><thead><tr><th>Name</th><th>Company</th><th>Phone</th><th>Email</th>
     <th>Source</th><th>Count</th><th>Actions</th></tr></thead>
   <tbody>{rows}</tbody></table>
+  {pg_controls_con}
 </div>'''
     return base_page(content, 'contacts', 'Contacts')
 
