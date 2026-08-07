@@ -7,14 +7,26 @@
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://www.newasiantrading.com/articles/mro-procurement-2026.html</loc>
+    <loc>https://www.newasiantrading.com/articles/mro-procurement-2026</loc>
     <lastmod>2026-08-02</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://www.newasiantrading.com/articles/welding-consumables-uae.html</loc>
+    <loc>https://www.newasiantrading.com/articles/welding-consumables-uae</loc>
     <lastmod>2026-08-04</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.newasiantrading.com/articles/fm-second-vendor-uae</loc>
+    <lastmod>2026-08-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.newasiantrading.com/articles/vendor-list-uae</loc>
+    <lastmod>2026-08-05</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
