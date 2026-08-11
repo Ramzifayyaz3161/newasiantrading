@@ -230,13 +230,60 @@ class CloudArchive(db.Model):
     added_at    = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Contact(db.Model):
-    id      = db.Column(db.Integer, primary_key=True)
-    name    = db.Column(db.String(200))
-    phone   = db.Column(db.String(50))
-    email   = db.Column(db.String(200))
-    company = db.Column(db.String(200))
-    source  = db.Column(db.String(50))
-    count   = db.Column(db.Integer, default=0)
+    id              = db.Column(db.Integer, primary_key=True)
+    name            = db.Column(db.String(200))
+    phone           = db.Column(db.String(50))
+    email           = db.Column(db.String(200))
+    company         = db.Column(db.String(200))
+    source          = db.Column(db.String(50))
+    count           = db.Column(db.Integer, default=0)
+    # --- Outbound pipeline fields ---
+    title           = db.Column(db.String(100))
+    linkedin        = db.Column(db.String(300))
+    website         = db.Column(db.String(300))
+    email_quality   = db.Column(db.String(20))
+    icp_notes       = db.Column(db.Text)
+    outreach_status = db.Column(db.String(30), default='New')
+    meeting_date    = db.Column(db.String(30))
+    meeting_notes   = db.Column(db.Text)
+    added_at        = db.Column(db.DateTime, default=datetime.utcnow)
+    logs            = db.relationship('OutreachLog', backref='contact', lazy=True, cascade='all, delete-orphan')
+
+class OutreachLog(db.Model):
+    id         = db.Column(db.Integer, primary_key=True)
+    contact_id = db.Column(db.Integer, db.ForeignKey('contact.id'), nullable=False)
+    date       = db.Column(db.String(30))
+    channel    = db.Column(db.String(30))
+    subject    = db.Column(db.String(200))
+    notes      = db.Column(db.Text)
+    added_by   = db.Column(db.String(100))
+    added_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    
+class Prospect(db.Model):
+    __tablename__ = 'prospect'
+    id              = db.Column(db.Integer, primary_key=True)
+    company         = db.Column(db.String(200))
+    name            = db.Column(db.String(200))
+    email           = db.Column(db.String(200))
+    phone           = db.Column(db.String(100))
+    mobile          = db.Column(db.String(100))
+    website         = db.Column(db.String(300))
+    address         = db.Column(db.String(300))
+    sector          = db.Column(db.String(100))
+    source          = db.Column(db.String(100), default='Yello UAE')
+    title           = db.Column(db.String(200))
+    key_contacts    = db.Column(db.Text)
+    description     = db.Column(db.Text)
+    services        = db.Column(db.Text)
+    icp_notes       = db.Column(db.Text)
+    supply_notes    = db.Column(db.Text)
+    outreach_status = db.Column(db.String(50), default='New')
+    outreach_notes  = db.Column(db.Text)
+    converted       = db.Column(db.Boolean, default=False)
+    converted_at    = db.Column(db.DateTime)
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at      = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by      = db.Column(db.Integer, db.ForeignKey('user.id'))
 
 class CatalogItem(db.Model):
     id          = db.Column(db.Integer, primary_key=True)
@@ -559,16 +606,31 @@ def generate_pdf(doc):
         hdrs = ["S.N.","Description","Spec","Qty","Unit"]
         cw   = [12*mm, 70*mm, 60*mm, 18*mm, 18*mm]
 
+    cell_style     = ParagraphStyle('ci', fontSize=8, leading=11, wordWrap='LTR')
+    cell_style_sm  = ParagraphStyle('cs', fontSize=7.5, leading=10, wordWrap='LTR')
+    cell_center    = ParagraphStyle('cc', fontSize=8, leading=11, alignment=TA_CENTER)
+    cell_right     = ParagraphStyle('cr', fontSize=8, leading=11, alignment=TA_RIGHT, fontName='Helvetica-Bold')
+
     rows = [hdrs]
     for i, item in enumerate(items, 1):
         if show_price:
-            rows.append([str(i), item.get('desc',''), item.get('spec',''),
-                         str(item.get('qty','')), item.get('unit','Pcs'),
-                         f'{float(item.get("rate",0)):,.2f}',
-                         f'{float(item.get("total",0)):,.2f}'])
+            rows.append([
+                Paragraph(str(i), cell_center),
+                Paragraph(item.get('desc',''), cell_style),
+                Paragraph(item.get('spec',''), cell_style_sm),
+                Paragraph(str(item.get('qty','')), cell_center),
+                Paragraph(item.get('unit','Pcs'), cell_center),
+                Paragraph(f'{float(item.get("rate",0)):,.2f}', cell_right),
+                Paragraph(f'{float(item.get("total",0)):,.2f}', cell_right),
+            ])
         else:
-            rows.append([str(i), item.get('desc',''), item.get('spec',''),
-                         str(item.get('qty','')), item.get('unit','Pcs')])
+            rows.append([
+                Paragraph(str(i), cell_center),
+                Paragraph(item.get('desc',''), cell_style),
+                Paragraph(item.get('spec',''), cell_style_sm),
+                Paragraph(str(item.get('qty','')), cell_center),
+                Paragraph(item.get('unit','Pcs'), cell_center),
+            ])
 
     while len(rows) < 9:
         rows.append(['']*len(hdrs))
@@ -614,6 +676,22 @@ def generate_pdf(doc):
             ParagraphStyle('w', fontSize=8, borderColor=colors.grey,
                            borderWidth=0.5, borderPadding=4, leading=12)))
         story.append(Spacer(1, 8*mm))
+
+    # ── Terms & Conditions (QUO / ENQ only) ──
+    if doc.doc_type in ('QUO', 'ENQ') and doc.remarks and doc.remarks.strip():
+        story.append(Spacer(1, 4*mm))
+        story.append(Paragraph(
+            '<b>Terms &amp; Conditions:</b>',
+            ParagraphStyle('tc_hdr', fontSize=8.5, fontName='Helvetica-Bold',
+                           textColor=nat_blue, leading=12)))
+        story.append(Spacer(1, 2*mm))
+        tc_style = ParagraphStyle('tc', fontSize=8, leading=12, wordWrap='LTR')
+        for line in doc.remarks.strip().split('\n'):
+            line = line.strip()
+            if line:
+                story.append(Paragraph(line, tc_style))
+                story.append(Spacer(1, 1*mm))
+        story.append(Spacer(1, 4*mm))
 
     # ── Signature + Stamp block ──
     creator = User.query.filter_by(name=doc.created_by).first()
@@ -953,6 +1031,7 @@ def base_page(content, active_nav='', title='NAT Ops'):
         ('vendors','Vendors','/vendors'),
         ('catalog','Catalog','/catalog'),
         ('contacts','Contacts','/contacts'),
+        ('prospects','Prospects','/prospects'),
         ('logistics','Logistics','/logistics'),
         ('archive','Archive','/archive'),
     ]
@@ -1199,12 +1278,19 @@ def dashboard():
     lm   = m-1 if m>1 else 12
     ly   = y if m>1 else y-1
 
+    # Support both DD/MM/YYYY (imported) and YYYY-MM-DD (CRM-created)
     inv_this = Document.query.filter(
         Document.doc_type=='INV', Document.status!='VOID',
-        Document.date.like(f'%-{str(m).zfill(2)}-%')).all()
+        db.or_(
+            Document.date.like(f'%/{str(m).zfill(2)}/{y}'),
+            Document.date.like(f'{y}-{str(m).zfill(2)}-%')
+        )).all()
     inv_last = Document.query.filter(
         Document.doc_type=='INV', Document.status!='VOID',
-        Document.date.like(f'%-{str(lm).zfill(2)}-%')).all()
+        db.or_(
+            Document.date.like(f'%/{str(lm).zfill(2)}/{ly}'),
+            Document.date.like(f'{ly}-{str(lm).zfill(2)}-%')
+        )).all()
 
     revenue  = sum(d.total or 0 for d in inv_this)
     rev_last = sum(d.total or 0 for d in inv_last)
@@ -1212,7 +1298,7 @@ def dashboard():
 
     open_lpos   = Document.query.filter_by(doc_type='LPO', status='Raised').count()
     unpaid_docs = Document.query.filter(
-        Document.doc_type=='INV', Document.status.in_(['Issued','Overdue'])).all()
+        Document.doc_type=='INV', Document.status.in_(['Issued','Overdue','Open'])).all()
     unpaid = sum(d.total or 0 for d in unpaid_docs)
 
     q_n = (m-1)//3 + 1
@@ -2263,6 +2349,22 @@ def profit():
                 'sell': sell_rate, 'cost': cost_rate,
                 'margin_aed': margin_aed, 'margin_pct': margin_pct
             })
+
+        # Fallback for historical imports: read supply cost stored in enquiry_ref
+        # as "Supply cost: AED 382.50" by the import script
+        if doc_cost == 0 and doc.enquiry_ref and doc.enquiry_ref.startswith('Supply cost:'):
+            try:
+                doc_cost = float(doc.enquiry_ref.replace('Supply cost: AED ', '').strip())
+                # Update item_detail so the detail row shows something useful
+                if item_detail:
+                    item_detail[0]['cost']       = doc_cost
+                    item_detail[0]['margin_aed'] = (item_detail[0]['sell'] * item_detail[0]['qty']) - doc_cost
+                    item_detail[0]['margin_pct'] = round(
+                        (item_detail[0]['margin_aed'] /
+                         (item_detail[0]['sell'] * item_detail[0]['qty']) * 100), 1
+                    ) if item_detail[0]['sell'] else 0
+            except:
+                pass
 
         doc_margin = doc_revenue - doc_cost
         margin_pct_doc = round((doc_margin / doc_revenue * 100), 1) if doc_revenue else 0
@@ -3456,15 +3558,28 @@ def contacts():
                     df.columns = [c.strip() for c in df.columns]
                     count = 0
                     for _, row in df.iterrows():
-                        name = str(row.get('Name', row.get('name',''))).strip()
-                        if not name or name == 'nan': continue
+                        def _s(k, k2, default=''):
+                            v = str(row.get(k, row.get(k2, default))).strip()
+                            return '' if v == 'nan' else v
+                        name = _s('Name','name')
+                        if not name: continue
+                        # Apollo export maps: First Name + Last Name → combine if no Name col
+                        if not name and 'First Name' in row:
+                            name = (str(row.get('First Name','')).strip() + ' ' + str(row.get('Last Name','')).strip()).strip()
+                        if not name: continue
                         db.session.add(Contact(
-                            name=name,
-                            phone=str(row.get('Phone', row.get('phone',''))).strip(),
-                            email=str(row.get('Email', row.get('email',''))).strip(),
-                            company=str(row.get('Company', row.get('company',''))).strip(),
-                            source=str(row.get('Source', row.get('source','Import'))).strip(),
-                            count=int(row.get('Count', row.get('count',0)) or 0),
+                            name            = name,
+                            phone           = _s('Phone','phone'),
+                            email           = _s('Email','email'),
+                            company         = _s('Company','company'),
+                            source          = _s('Source','source') or 'Import',
+                            count           = int(row.get('Count', row.get('count', 0)) or 0),
+                            title           = _s('Title','title'),
+                            linkedin        = _s('LinkedIn','linkedin'),
+                            website         = _s('Website','website'),
+                            email_quality   = _s('Quality','quality'),
+                            icp_notes       = _s('ICP','icp_notes'),
+                            outreach_status = _s('Status','status') or 'New',
                         ))
                         count += 1
                     db.session.commit()
@@ -3501,17 +3616,22 @@ def contacts():
     page          = min(page, total_pages)
     contacts_list = q_obj.offset((page-1)*per_page).limit(per_page).all()
     is_admin = session.get('user_role') == 'admin'
+    _STATUS_CLR = {'New':'#6c757d','Emailed':'#0d6efd','Replied':'#fd7e14',
+                   'Meeting Booked':'#198754','Converted':'#20c997','Not Interested':'#dc3545'}
     rows = ''.join(f'''<tr>
-      <td><strong>{c.name}</strong></td>
+      <td><a href="/contacts/{c.id}" style="font-weight:600;color:#1a3a5c">{c.name}</a></td>
       <td style="font-size:11px">{c.company or "-"}</td>
-      <td>{c.phone or "-"}</td><td style="font-size:11px">{c.email or "-"}</td>
+      <td style="font-size:11px">{c.title or "-"}</td>
+      <td>{c.phone or "-"}</td>
+      <td style="font-size:11px">{c.email or "-"}</td>
+      <td><span style="background:{_STATUS_CLR.get(c.outreach_status or 'New','#6c757d')};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">{c.outreach_status or 'New'}</span></td>
       <td><span class="badge badge-grey">{c.source}</span></td>
-      <td>{c.count or ""}</td>
       <td style="white-space:nowrap">
         {f'<a href="https://wa.me/{re.sub(chr(91)+chr(94)+"0-9"+chr(93),"",c.phone or "")}" target="_blank" class="btn btn-sm btn-success">WA</a>' if c.phone else ""}
         {f'<a href="mailto:{c.email}" class="btn btn-sm btn-info">Email</a>' if c.email else ""}
+        {f'<a href="{c.linkedin}" target="_blank" class="btn btn-sm btn-outline" style="font-size:10px">LI</a>' if c.linkedin else ""}
       </td></tr>''' for c in contacts_list) or \
-      '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px">No contacts loaded yet.</td></tr>'
+      '<tr><td colspan="8" style="text-align:center;color:#999;padding:20px">No contacts loaded yet.</td></tr>'
 
     def _pg_url_con(p, pp=per_page):
         return f"/contacts?q={request.args.get('q','')}&page={p}&per_page={pp}"
@@ -3572,12 +3692,666 @@ def contacts():
       <button type="button" onclick="document.getElementById('import-contacts').style.display='none'" class="btn btn-outline">Cancel</button>
     </form>
   </div></div>
-  <table><thead><tr><th>Name</th><th>Company</th><th>Phone</th><th>Email</th>
-    <th>Source</th><th>Count</th><th>Actions</th></tr></thead>
+  <table><thead><tr><th>Name</th><th>Company</th><th>Title</th><th>Phone</th><th>Email</th>
+    <th>Status</th><th>Source</th><th>Actions</th></tr></thead>
   <tbody>{rows}</tbody></table>
   {pg_controls_con}
 </div>'''
     return base_page(content, 'contacts', 'Contacts')
+
+
+@app.route('/contacts/<int:cid>', methods=['GET','POST'])
+@login_required
+def contact_detail(cid):
+    c = Contact.query.get_or_404(cid)
+    if request.method == 'POST':
+        action = request.form.get('action','')
+        if action == 'update_status':
+            c.outreach_status = request.form.get('outreach_status', c.outreach_status)
+            c.meeting_date    = request.form.get('meeting_date', c.meeting_date)
+            c.meeting_notes   = request.form.get('meeting_notes', c.meeting_notes)
+            c.icp_notes       = request.form.get('icp_notes', c.icp_notes)
+            db.session.commit()
+            flash('Contact updated.', 'success')
+        elif action == 'add_log':
+            db.session.add(OutreachLog(
+                contact_id = cid,
+                date       = request.form.get('date', datetime.now().strftime('%Y-%m-%d')),
+                channel    = request.form.get('channel','Email'),
+                subject    = request.form.get('subject',''),
+                notes      = request.form.get('notes',''),
+                added_by   = session.get('username',''),
+            ))
+            db.session.commit()
+            flash('Log added.', 'success')
+        elif action == 'delete_log':
+            log = OutreachLog.query.get(int(request.form.get('log_id',0)))
+            if log and log.contact_id == cid:
+                db.session.delete(log)
+                db.session.commit()
+        return redirect(url_for('contact_detail', cid=cid))
+
+    # GET — render detail page
+    STATUS_COLORS = {
+            'New':'#6c757d','Emailed':'#0d6efd','Replied':'#fd7e14',
+            'Meeting Booked':'#198754','Converted':'#20c997','Not Interested':'#dc3545'
+        }
+    status_opts = ''.join(
+        f'<option value="{s}" {"selected" if c.outreach_status==s else ""}>{s}</option>'
+        for s in STATUS_COLORS
+    )
+    logs_html = ''.join(f"""
+        <tr>
+          <td style="font-size:11px">{l.date or "-"}</td>
+          <td><span class="badge badge-grey">{l.channel}</span></td>
+          <td style="font-size:12px">{l.subject or "-"}</td>
+          <td style="font-size:12px">{l.notes or "-"}</td>
+          <td style="font-size:11px">{l.added_by or "-"}</td>
+          <td><form method="POST" style="display:inline">
+            <input type="hidden" name="action" value="delete_log">
+            <input type="hidden" name="log_id" value="{l.id}">
+            <button class="btn btn-sm btn-danger" onclick="return confirm('Delete?')">✕</button>
+          </form></td>
+        </tr>""" for l in sorted(c.logs, key=lambda x: x.added_at, reverse=True)
+    ) or '<tr><td colspan="6" style="text-align:center;color:#999;padding:16px">No outreach logged yet.</td></tr>'
+
+    sc = STATUS_COLORS.get(c.outreach_status or 'New','#6c757d')
+    today = datetime.now().strftime('%Y-%m-%d')
+    li_btn = f'<a href="{c.linkedin}" target="_blank" class="btn btn-sm btn-outline">LinkedIn ↗</a>' if c.linkedin else ""
+    web_btn = f'<a href="{c.website}" target="_blank" class="btn btn-sm btn-outline">Website ↗</a>' if c.website else ""
+
+    content = f"""<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+    <div>
+      <h2 style="margin:0">{c.name}</h2>
+      <p style="color:#666;margin:4px 0 0">{c.company or ""}{(" &bull; " + c.title) if c.title else ""}</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span style="background:{sc};color:#fff;padding:5px 14px;border-radius:12px;font-size:12px;font-weight:600">{c.outreach_status or "New"}</span>
+      {li_btn}{web_btn}
+      <a href="/contacts" class="btn btn-outline btn-sm">← Back</a>
+    </div>
+  </div>
+  <hr style="margin:14px 0">
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px;font-size:13px">
+    <div><span style="color:#888;font-size:11px;text-transform:uppercase">Email</span><br>
+      {"<a href='mailto:" + c.email + "'>" + c.email + "</a>" if c.email else "-"}</div>
+    <div><span style="color:#888;font-size:11px;text-transform:uppercase">Phone</span><br>{c.phone or "-"}</div>
+    <div><span style="color:#888;font-size:11px;text-transform:uppercase">Email Quality</span><br>
+      <span style="color:{"#198754" if c.email_quality=="good" else "#dc3545" if c.email_quality=="risky" else "#666"}">{c.email_quality or "-"}</span></div>
+    <div><span style="color:#888;font-size:11px;text-transform:uppercase">Source</span><br>{c.source or "-"}</div>
+    <div><span style="color:#888;font-size:11px;text-transform:uppercase">Meeting Date</span><br>{c.meeting_date or "Not booked"}</div>
+    <div><span style="color:#888;font-size:11px;text-transform:uppercase">Added</span><br>{c.added_at.strftime("%d/%m/%Y") if c.added_at else "-"}</div>
+  </div>
+
+  <form method="POST">
+    <input type="hidden" name="action" value="update_status">
+    <div class="grid3">
+      <div class="form-group"><label>Outreach Status</label>
+        <select name="outreach_status">{status_opts}</select></div>
+      <div class="form-group"><label>Meeting Date</label>
+        <input type="date" name="meeting_date" value="{c.meeting_date or ""}"></div>
+    </div>
+    <div class="form-group"><label>ICP / Research Notes</label>
+      <textarea name="icp_notes" rows="3" style="width:100%;box-sizing:border-box">{c.icp_notes or ""}</textarea></div>
+    <div class="form-group"><label>Meeting Notes</label>
+      <textarea name="meeting_notes" rows="2" style="width:100%;box-sizing:border-box">{c.meeting_notes or ""}</textarea></div>
+    <button type="submit" class="btn btn-primary">Save Changes</button>
+  </form>
+
+  <hr style="margin:24px 0">
+  <h3 style="margin-bottom:12px">Outreach Log</h3>
+  <div style="background:#f8f9ff;border:1px solid #dce0f0;border-radius:8px;padding:14px;margin-bottom:16px">
+    <form method="POST">
+      <input type="hidden" name="action" value="add_log">
+      <div class="grid3">
+        <div class="form-group"><label>Date</label>
+          <input type="date" name="date" value="{today}"></div>
+        <div class="form-group"><label>Channel</label>
+          <select name="channel">
+            <option>Email</option><option>LinkedIn</option>
+            <option>WhatsApp</option><option>Call</option>
+          </select></div>
+        <div class="form-group"><label>Subject / Topic</label>
+          <input name="subject" placeholder="e.g. Cold email #1, Follow-up"></div>
+      </div>
+      <div class="form-group"><label>Notes</label>
+        <textarea name="notes" rows="2" style="width:100%;box-sizing:border-box"
+                  placeholder="What happened? Response received? Next step?"></textarea></div>
+      <button type="submit" class="btn btn-success">+ Log Outreach</button>
+    </form>
+  </div>
+  <table><thead><tr>
+    <th>Date</th><th>Channel</th><th>Subject</th><th>Notes</th><th>By</th><th></th>
+  </tr></thead>
+  <tbody>{logs_html}</tbody></table>
+</div>"""
+    return base_page(content, 'contacts', f'Contact — {c.name}')
+
+
+PROSPECT_STATUSES = ['New', 'Researched', 'Contacted', 'Replied', 'Meeting Set',
+                     'Proposal Sent', 'Negotiating', 'Converted', 'Not Interested', 'Stale']
+
+PROSPECT_SECTORS = ['Industrial Supplies', 'Industrial Services', 'Engineering',
+                    'Building Maintenance / FM', 'Metal Products', 'Electromechanical',
+                    'Food Manufacturing', 'Industrial Equipment', 'Welding Services',
+                    'Construction', 'Oil & Gas', 'Utilities', 'Other']
+
+# ── Supply Intelligence Mapping ─────────────────────────────────────────────
+
+SUPPLY_INTEL = {
+    'Industrial Supplies': [
+        ('Piping & Fittings',       'High', 'Core MRO — pipes, flanges, fittings for plant maintenance'),
+        ('Hand Tools',              'High', 'Daily consumable — spanners, wrenches, hand tools'),
+        ('Fasteners',               'High', 'High volume repeat purchase — bolts, nuts, anchors'),
+        ('Safety & PPE',            'High', 'Mandatory compliance — helmets, gloves, harnesses'),
+        ('Mechanical & Bearings',   'Medium', 'Plant maintenance — bearings, couplings, drives'),
+        ('Electrical',              'Medium', 'Electrical maintenance — cables, conduits, fittings'),
+        ('Abrasives',               'Medium', 'Grinding, cutting, surface prep consumables'),
+        ('Chemicals & Lubricants',  'Medium', 'Hydraulic oils, greases, cleaning chemicals'),
+    ],
+    'Industrial Services': [
+        ('Safety & PPE',            'High', 'Site safety compliance — PPE for field teams'),
+        ('Hand Tools',              'High', 'Field tools for service engineers'),
+        ('Electrical',              'High', 'Electrical components for service works'),
+        ('Piping & Fittings',       'Medium', 'Replacement fittings for service jobs'),
+        ('Fasteners',               'Medium', 'Fixings and fasteners for installation works'),
+        ('Abrasives',               'Low', 'Surface prep for service and repair works'),
+    ],
+    'Engineering': [
+        ('Structural Steel',        'High', 'MS/SS plates, angles, channels for fabrication'),
+        ('Fasteners',               'High', 'High-spec bolts, anchors for structural work'),
+        ('Welding & Cutting',       'High', 'Electrodes, rods, cutting discs, welding sets'),
+        ('Piping & Fittings',       'High', 'Process piping for engineering projects'),
+        ('Mechanical & Bearings',   'Medium', 'Mechanical components for equipment installation'),
+        ('Safety & PPE',            'Medium', 'Site PPE for engineering teams'),
+        ('Hand Tools',              'Medium', 'Tools for engineering and installation works'),
+    ],
+    'Building Maintenance / FM': [
+        ('Electrical',              'High', 'Cables, switches, DB components for FM works'),
+        ('Piping & Fittings',       'High', 'Plumbing and drainage for building maintenance'),
+        ('Safety & PPE',            'High', 'Mandatory PPE for FM and maintenance teams'),
+        ('Hand Tools',              'High', 'Full tool range for FM technicians'),
+        ('Hardware & General',      'High', 'General hardware, fixings, consumables for FM'),
+        ('Chemicals & Lubricants',  'Medium', 'Cleaning chemicals, lubricants for HVAC/plant'),
+        ('Abrasives',               'Medium', 'Surface prep and repair consumables'),
+        ('Paints & Coatings',       'Medium', 'Touch-up paints, anti-corrosion coatings'),
+    ],
+    'Electromechanical': [
+        ('Electrical',              'High', 'Cables, conduits, switchgear components'),
+        ('Mechanical & Bearings',   'High', 'Bearings, drives, couplings for EM works'),
+        ('Piping & Fittings',       'High', 'Piping for mechanical services'),
+        ('Hand Tools',              'High', 'EM installation and maintenance tools'),
+        ('Power Tools',             'High', 'Drills, grinders for EM installation works'),
+        ('Fasteners',               'Medium', 'Fixings for EM panel and equipment installation'),
+        ('Safety & PPE',            'Medium', 'Electrical safety PPE — arc flash, insulated tools'),
+        ('Valves',                  'Medium', 'Control valves for mechanical services'),
+    ],
+    'Metal Products': [
+        ('Welding & Cutting',       'High', 'Electrodes, rods, discs for metal fabrication'),
+        ('Abrasives',               'High', 'Grinding and cutting discs — high consumption'),
+        ('Structural Steel',        'High', 'Raw steel sections for fabrication'),
+        ('Hand Tools',              'High', 'Workshop hand tools'),
+        ('Power Tools',             'High', 'Angle grinders, drills for fabrication shop'),
+        ('Fasteners',               'High', 'Bolts, rivets, screws for assembly'),
+        ('Safety & PPE',            'Medium', 'Welding PPE — shields, gloves, aprons'),
+        ('Chemicals & Lubricants',  'Medium', 'Cutting fluids, anti-spatter, lubricants'),
+    ],
+    'Food Manufacturing': [
+        ('Safety & PPE',            'High', 'Food-grade PPE — gloves, hairnets, aprons'),
+        ('Chemicals & Lubricants',  'High', 'Food-grade lubricants, cleaning chemicals'),
+        ('Piping & Fittings',       'High', 'Stainless steel fittings for food processing lines'),
+        ('Mechanical & Bearings',   'High', 'Bearings for food processing equipment'),
+        ('Hand Tools',              'Medium', 'Maintenance tools for food plant'),
+        ('Electrical',              'Medium', 'Electrical maintenance for food plant'),
+        ('Fasteners',               'Medium', 'SS fasteners for food-grade equipment'),
+    ],
+    'Industrial Equipment': [
+        ('Mechanical & Bearings',   'High', 'Bearings and drives for heavy equipment'),
+        ('Hoses & Seals',           'High', 'Hydraulic hoses and seals for equipment'),
+        ('Chemicals & Lubricants',  'High', 'Hydraulic oils, gear oils for equipment'),
+        ('Hand Tools',              'Medium', 'Maintenance tools for equipment servicing'),
+        ('Fasteners',               'Medium', 'High-strength fasteners for equipment assembly'),
+        ('Safety & PPE',            'Medium', 'Workshop PPE'),
+        ('Electrical',              'Low', 'Electrical components for equipment control panels'),
+    ],
+    'Welding Services': [
+        ('Welding & Cutting',       'High', 'Electrodes, rods, wire, gases — core business need'),
+        ('Abrasives',               'High', 'Cutting and grinding discs — daily consumable'),
+        ('Safety & PPE',            'High', 'Welding shields, gloves, aprons, ear protection'),
+        ('Hand Tools',              'High', 'Chipping hammers, wire brushes, clamps'),
+        ('Power Tools',             'High', 'Angle grinders, plasma cutters'),
+        ('Structural Steel',        'Medium', 'Steel sections for fabrication projects'),
+        ('Fasteners',               'Medium', 'Bolts and fixings for fabrication assembly'),
+    ],
+    'Construction': [
+        ('Structural Steel',        'High', 'Plates, angles, channels for structural work'),
+        ('Fasteners',               'High', 'Anchors, bolts, chemical fixings'),
+        ('Safety & PPE',            'High', 'Site PPE — mandatory on all UAE construction sites'),
+        ('Hand Tools',              'High', 'Full site tool range'),
+        ('Power Tools',             'High', 'Drills, saws, grinders for construction'),
+        ('Abrasives',               'Medium', 'Cutting discs, grinding wheels'),
+        ('Hardware & General',      'Medium', 'General site hardware and consumables'),
+        ('Electrical',              'Medium', 'Temporary power, site electrical materials'),
+    ],
+    'Oil & Gas': [
+        ('Valves',                  'High', 'Ball, gate, check valves — high spec, high value'),
+        ('Piping & Fittings',       'High', 'High-pressure piping, flanges, fittings'),
+        ('Hoses & Seals',           'High', 'Industrial hoses and seals for O&G applications'),
+        ('Safety & PPE',            'High', 'ATEX/EX-rated PPE for hazardous areas'),
+        ('Mechanical & Bearings',   'Medium', 'Pump and compressor bearings'),
+        ('Instrumentation',         'Medium', 'Process instruments, calibration equipment'),
+        ('Chemicals & Lubricants',  'Medium', 'Specialty lubricants for O&G equipment'),
+        ('Fasteners',               'Medium', 'High-spec SS/alloy fasteners'),
+    ],
+    'Utilities': [
+        ('Valves',                  'High', 'Water and utility valves — core procurement'),
+        ('Piping & Fittings',       'High', 'Utility piping — water, gas, district cooling'),
+        ('Electrical',              'High', 'Cables, switchgear for utility infrastructure'),
+        ('Mechanical & Bearings',   'High', 'Pump bearings for utility plant'),
+        ('Safety & PPE',            'High', 'Operational PPE for utility field teams'),
+        ('Instrumentation',         'Medium', 'Flow meters, pressure gauges, test equipment'),
+        ('Chemicals & Lubricants',  'Medium', 'Water treatment chemicals, lubricants'),
+        ('Hand Tools',              'Medium', 'Field maintenance tools'),
+    ],
+    'Other': [
+        ('Hardware & General',      'Medium', 'General industrial supplies'),
+        ('Safety & PPE',            'Medium', 'Basic site safety equipment'),
+        ('Hand Tools',              'Medium', 'General tools and equipment'),
+        ('Fasteners',               'Low', 'General fixings and fasteners'),
+    ],
+}
+
+def get_supply_suggestions(sector):
+    """Return ranked supply suggestions for a given sector."""
+    suggestions = SUPPLY_INTEL.get(sector, SUPPLY_INTEL.get('Other', []))
+    return suggestions[:6]  # top 6
+
+def render_supply_intel(sector):
+    """Render HTML supply intelligence card for a sector."""
+    if not sector:
+        return ''
+    suggestions = get_supply_suggestions(sector)
+    if not suggestions:
+        return ''
+    
+    badge_color = {'High': '#27ae60', 'Medium': '#f39c12', 'Low': '#95a5a6'}
+    
+    rows = ''
+    for cat, confidence, reason in suggestions:
+        color = badge_color.get(confidence, '#95a5a6')
+        rows += f'''
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0">
+          <div style="min-width:140px;font-weight:600;font-size:12px;color:#1a3a6b">{cat}</div>
+          <span style="background:{color};color:#fff;padding:2px 7px;border-radius:8px;
+                       font-size:10px;font-weight:bold;white-space:nowrap">{confidence}</span>
+          <div style="font-size:12px;color:#666">{reason}</div>
+        </div>'''
+    
+    return f'''
+    <div class="card" style="margin-top:16px;border-left:4px solid #1a3a6b">
+      <h2>🎯 NAT Supply Intelligence — {sector}</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px">
+        Based on this company's sector, NAT can likely supply:</p>
+      {rows}
+      <p style="font-size:11px;color:#aaa;margin-top:10px">
+        Confidence based on NAT catalog depth and sector procurement patterns.</p>
+    </div>'''
+
+
+
+
+@app.route('/prospects')
+@login_required
+def prospects():
+    page      = request.args.get('page', 1, type=int)
+    per_page  = request.args.get('per_page', 50, type=int)
+    sector    = request.args.get('sector', '')
+    status    = request.args.get('status', '')
+    search    = request.args.get('search', '').strip()
+    has_email = request.args.get('has_email', '')
+
+    q = Prospect.query.filter_by(converted=False)
+    if sector:
+        q = q.filter(Prospect.sector == sector)
+    if status:
+        q = q.filter(Prospect.outreach_status == status)
+    if has_email == '1':
+        q = q.filter(Prospect.email != None, Prospect.email != '')
+    if search:
+        q = q.filter(db.or_(
+            Prospect.company.ilike(f'%{search}%'),
+            Prospect.email.ilike(f'%{search}%'),
+            Prospect.icp_notes.ilike(f'%{search}%'),
+        ))
+
+    # Sort: contacts with email first, then phone, then alphabetical
+    q = q.order_by(
+        db.case((Prospect.email != None, 0), (Prospect.email != '', 0), else_=1),
+        db.case((Prospect.phone != None, 0), (Prospect.phone != '', 0), else_=1),
+        Prospect.company
+    )
+    total = q.count()
+    items = q.offset((page - 1) * per_page).limit(per_page).all()
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    stats = {
+        'total':      Prospect.query.filter_by(converted=False).count(),
+        'with_email': Prospect.query.filter(
+                        Prospect.converted == False,
+                        Prospect.email != None, Prospect.email != ''
+                      ).count(),
+        'contacted':  Prospect.query.filter(
+                        Prospect.converted == False,
+                        Prospect.outreach_status.in_(['Contacted', 'Replied', 'Meeting Set'])
+                      ).count(),
+        'converted':  Prospect.query.filter_by(converted=True).count(),
+    }
+
+    # Build HTML inline using base_page style
+    sector_opts = '<option value="">All Sectors</option>' + ''.join(
+        f'<option value="{s}" {"selected" if sector==s else ""}>{s}</option>'
+        for s in PROSPECT_SECTORS)
+    status_opts = '<option value="">All Statuses</option>' + ''.join(
+        f'<option value="{s}" {"selected" if status==s else ""}>{s}</option>'
+        for s in PROSPECT_STATUSES)
+    pp_opts = ''.join(
+        f'<option value="{n}" {"selected" if per_page==n else ""}>{n}</option>'
+        for n in [50, 100, 200])
+
+    badge_map = {
+        'New':'badge-grey','Researched':'badge-blue','Contacted':'badge-blue',
+        'Replied':'badge-orange','Meeting Set':'badge-green','Proposal Sent':'badge-blue',
+        'Negotiating':'badge-orange','Converted':'badge-green',
+        'Not Interested':'badge-red','Stale':'badge-grey'
+    }
+
+    rows = ''
+    for p in items:
+        email_html = f'<a href="mailto:{p.email}" style="font-size:12px">{p.email}</a>' if p.email else '<span style="color:#999">—</span>'
+        desc = (p.description or p.icp_notes or '')[:80]
+        phone_html = f'<a href="tel:{p.phone}" style="font-size:12px">{p.phone}</a>' if p.phone else '<span style="color:#999">—</span>'
+        wa_html = f'<a href="https://wa.me/{p.phone.replace("+","").replace(" ","")}" target="_blank" style="font-size:11px;color:#25D366">WA</a>' if p.phone else ''
+        rows += f'''<tr>
+          <td><a href="/prospects/{p.id}" style="font-weight:600;color:#1a3a6b">{p.company or "—"}</a>
+            {f'<a href="{p.website}" target="_blank" style="color:#aaa;font-size:10px;margin-left:4px">↗</a>' if p.website else ""}
+          </td>
+          <td><span class="badge badge-grey" style="font-size:10px">{p.sector or "—"}</span></td>
+          <td>{email_html}</td>
+          <td style="font-size:12px;color:#555;white-space:nowrap">{phone_html} {wa_html}</td>
+          <td><span class="badge {badge_map.get(p.outreach_status,"badge-grey")}" style="font-size:10px">{p.outreach_status}</span></td>
+          <td style="font-size:11px;color:#888;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{desc}</td>
+          <td><a href="/prospects/{p.id}" class="btn btn-sm btn-outline">View</a></td>
+        </tr>'''
+
+    if not items:
+        rows = '<tr><td colspan="7" style="text-align:center;color:#999;padding:20px">No prospects found. <a href="/prospects/import">Import CSV</a></td></tr>'
+
+    # Pagination
+    def pg_url(p):
+        return f'/prospects?page={p}&per_page={per_page}&sector={sector}&status={status}&search={search}&has_email={has_email}'
+
+    pg_html = ''
+    if total_pages > 1:
+        if page > 1:
+            pg_html += f'<a href="{pg_url(1)}" class="btn btn-sm btn-outline">«</a> '
+            pg_html += f'<a href="{pg_url(page-1)}" class="btn btn-sm btn-outline">‹</a> '
+        for pg in range(max(1, page-2), min(total_pages+1, page+3)):
+            pg_html += f'<a href="{pg_url(pg)}" class="btn btn-sm {"btn-primary" if pg==page else "btn-outline"}">{pg}</a> '
+        if page < total_pages:
+            pg_html += f'<a href="{pg_url(page+1)}" class="btn btn-sm btn-outline">›</a> '
+            pg_html += f'<a href="{pg_url(total_pages)}" class="btn btn-sm btn-outline">»</a>'
+
+    content_html = f'''
+<div class="stats">
+  <div class="stat"><div class="stat-label">Total Prospects</div>
+    <div class="stat-value">{stats["total"]:,}</div></div>
+  <div class="stat"><div class="stat-label">With Email</div>
+    <div class="stat-value green">{stats["with_email"]:,}</div></div>
+  <div class="stat"><div class="stat-label">Contacted</div>
+    <div class="stat-value orange">{stats["contacted"]:,}</div></div>
+  <div class="stat"><div class="stat-label">Converted</div>
+    <div class="stat-value blue">{stats["converted"]:,}</div></div>
+</div>
+<div class="card">
+  <h2>Prospects ({total:,} results)</h2>
+  <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:end">
+    <form method="GET" style="display:flex;gap:6px;flex-wrap:wrap">
+      <input type="text" name="search" value="{search}" placeholder="Search company / email..."
+             style="padding:7px 11px;border:1px solid #ddd;border-radius:6px;font-size:12px;width:200px">
+      <select name="sector" style="padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px">{sector_opts}</select>
+      <select name="status" style="padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px">{status_opts}</select>
+      <select name="has_email" style="padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px">
+        <option value="" {"selected" if not has_email else ""}>All</option>
+        <option value="1" {"selected" if has_email=="1" else ""}>Email only</option>
+      </select>
+      <select name="per_page" style="padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px">{pp_opts}</select>
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      <a href="/prospects" class="btn btn-outline btn-sm">Clear</a>
+    </form>
+    <a href="/prospects/import" class="btn btn-success btn-sm">⬆ Import CSV</a>
+  </div>
+  <div style="font-size:12px;color:#888;margin-bottom:8px">Page {page} of {total_pages}</div>
+  <table><thead><tr>
+    <th>Company</th><th>Sector</th><th>Email</th><th>Phone</th>
+    <th>Status</th><th>Description</th><th></th>
+  </tr></thead><tbody>{rows}</tbody></table>
+  <div style="margin-top:12px;display:flex;gap:4px;flex-wrap:wrap">{pg_html}</div>
+</div>'''
+    return base_page(content_html, 'prospects', 'Prospects')
+
+
+@app.route('/prospects/<int:pid>')
+@login_required
+def prospect_detail(pid):
+    p = Prospect.query.get_or_404(pid)
+    status_opts = ''.join(
+        f'<option value="{s}" {"selected" if p.outreach_status==s else ""}>{s}</option>'
+        for s in PROSPECT_STATUSES)
+
+    converted_badge = '<span class="badge badge-green" style="font-size:13px">Converted to Client</span>' if p.converted else ''
+    convert_btn = '' if p.converted else f'''
+        <form method="POST" action="/prospects/{p.id}/convert" style="display:inline"
+              onsubmit="return confirm('Convert {p.company} to a Client?')">
+          <button class="btn btn-success">✓ Convert to Client</button>
+        </form>
+        <form method="POST" action="/prospects/{p.id}/delete" style="display:inline"
+              onsubmit="return confirm('Delete this prospect?')">
+          <button class="btn btn-danger btn-sm">Delete</button>
+        </form>'''
+
+    detail_html = f'''<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+    <div>
+      <h2 style="margin:0">{p.company or "Unknown"}</h2>
+      <div style="margin-top:6px">
+        <span class="badge badge-grey">{p.sector or "—"}</span>
+        <span class="badge badge-blue" style="margin-left:4px">{p.source or "Yello UAE"}</span>
+        {converted_badge}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <span class="badge badge-orange" style="font-size:13px">{p.outreach_status}</span>
+      {convert_btn}
+      <a href="/prospects" class="btn btn-outline btn-sm">← Back</a>
+    </div>
+  </div>
+  {"<p style='color:#555;margin-top:10px'>"+p.description+"</p>" if p.description else ""}
+  <hr style="margin:14px 0">
+
+  <div class="grid2">
+    <div class="card" style="background:#f8f9ff">
+      <h2>Contact Info</h2>
+      <table style="font-size:13px"><tbody>
+        <tr><td style="color:#888;width:90px">Email</td>
+            <td>{"<a href='mailto:"+p.email+"'>"+p.email+"</a>" if p.email else "—"}</td></tr>
+        <tr><td style="color:#888">Phone</td><td>{p.phone or "—"}</td></tr>
+        <tr><td style="color:#888">Mobile</td><td>{p.mobile or "—"}</td></tr>
+        <tr><td style="color:#888">Website</td>
+            <td>{"<a href='"+p.website+"' target='_blank'>"+p.website[:40]+"</a>" if p.website else "—"}</td></tr>
+        <tr><td style="color:#888">Address</td><td>{p.address or "—"}</td></tr>
+      </tbody></table>
+    </div>
+    <div class="card" style="background:#f8f9ff">
+      <h2>Intelligence</h2>
+      <div style="font-size:13px">
+        {"<div style='margin-bottom:8px'><b>Services:</b> "+p.services+"</div>" if p.services else ""}
+        {"<div style='margin-bottom:8px'><b>ICP Notes:</b> "+p.icp_notes+"</div>" if p.icp_notes else ""}
+        {"<div style='margin-bottom:8px;color:#27ae60'><b>NAT Supply Notes:</b> "+p.supply_notes+"</div>" if p.supply_notes else ""}
+      </div>
+    </div>
+  </div>
+
+  {render_supply_intel(p.sector)}
+
+  <div class="card" style="margin-top:16px">
+    <h2>Update Prospect</h2>
+    <form method="POST" action="/prospects/{p.id}/update">
+      <div class="form-group"><label>Key Contacts (names, titles, numbers)</label>
+        <textarea name="key_contacts" rows="3">{p.key_contacts or ""}</textarea></div>
+      <div class="grid3">
+        <div class="form-group"><label>Outreach Status</label>
+          <select name="outreach_status">{status_opts}</select></div>
+        <div class="form-group"><label>Email</label>
+          <input type="email" name="email" value="{p.email or ""}"></div>
+        <div class="form-group"><label>Phone</label>
+          <input name="phone" value="{p.phone or ""}"></div>
+      </div>
+      <div class="form-group"><label>Outreach Notes</label>
+        <textarea name="outreach_notes" rows="2">{p.outreach_notes or ""}</textarea></div>
+      <div class="form-group"><label>NAT Supply Notes</label>
+        <textarea name="supply_notes" rows="2">{p.supply_notes or ""}</textarea></div>
+      <div class="form-group"><label>ICP Notes</label>
+        <textarea name="icp_notes" rows="2">{p.icp_notes or ""}</textarea></div>
+      <button type="submit" class="btn btn-primary">Save Changes</button>
+    </form>
+  </div>
+</div>'''
+    return base_page(detail_html, 'prospects', p.company or 'Prospect')
+
+
+@app.route('/prospects/<int:pid>/update', methods=['POST'])
+@login_required
+def prospect_update(pid):
+    p = Prospect.query.get_or_404(pid)
+    p.outreach_status = request.form.get('outreach_status', p.outreach_status)
+    p.outreach_notes  = request.form.get('outreach_notes', p.outreach_notes)
+    p.key_contacts    = request.form.get('key_contacts', p.key_contacts)
+    p.supply_notes    = request.form.get('supply_notes', p.supply_notes)
+    p.icp_notes       = request.form.get('icp_notes', p.icp_notes)
+    p.title           = request.form.get('title', p.title)
+    p.email           = request.form.get('email', p.email)
+    p.phone           = request.form.get('phone', p.phone)
+    p.website         = request.form.get('website', p.website)
+    p.updated_at      = datetime.utcnow()
+    db.session.commit()
+    flash('Prospect updated.', 'success')
+    return redirect(url_for('prospect_detail', pid=pid))
+
+
+@app.route('/prospects/<int:pid>/convert', methods=['POST'])
+@login_required
+def prospect_convert(pid):
+    p = Prospect.query.get_or_404(pid)
+    if p.converted:
+        flash('Already converted to client.', 'warning')
+        return redirect(url_for('prospect_detail', pid=pid))
+    # Avoid duplicate client
+    existing = Client.query.filter(
+        db.func.lower(Client.name) == (p.company or '').lower().strip()
+    ).first()
+    if not existing:
+        new_client = Client(
+            name       = p.company or '',
+            email      = p.email or '',
+            phone      = p.phone or p.mobile or '',
+            address    = p.address or '',
+            website    = p.website or '',
+            notes      = f"Converted from Prospect | {p.icp_notes or ''}",
+            added_by   = session.get('user_name',''),
+        )
+        db.session.add(new_client)
+    p.converted       = True
+    p.converted_at    = datetime.utcnow()
+    p.outreach_status = 'Converted'
+    db.session.commit()
+    flash(f'{p.company} converted to Client successfully.', 'success')
+    return redirect(url_for('clients'))
+
+
+@app.route('/prospects/import', methods=['GET', 'POST'])
+@login_required
+def prospects_import():
+    if request.method == 'POST':
+        f = request.files.get('file')
+        if not f or not f.filename.endswith('.csv'):
+            flash('Please upload a .csv file.', 'danger')
+            return redirect(url_for('prospects_import'))
+        import csv, io
+        stream = io.StringIO(f.stream.read().decode('utf-8-sig'))
+        reader = csv.DictReader(stream)
+        added = skipped = 0
+        for row in reader:
+            company = (row.get('Company') or '').strip()
+            if not company:
+                skipped += 1
+                continue
+            exists = Prospect.query.filter(
+                db.func.lower(Prospect.company) == company.lower()
+            ).first()
+            if exists:
+                skipped += 1
+                continue
+            db.session.add(Prospect(
+                company         = company,
+                name            = (row.get('Name') or '').strip(),
+                email           = (row.get('Email') or '').strip(),
+                phone           = (row.get('Phone') or '').strip(),
+                website         = (row.get('Website') or '').strip(),
+                address         = (row.get('Address') or '').strip(),
+                sector          = (row.get('Category') or '').strip(),
+                source          = (row.get('Source') or 'Yello UAE').strip(),
+                title           = (row.get('Title') or '').strip(),
+                description     = (row.get('Description') or '').strip(),
+                services        = (row.get('Services') or '').strip(),
+                icp_notes       = (row.get('ICP Notes') or '').strip(),
+                outreach_status = 'New',
+                created_by      = session.get('user_id'),
+            ))
+            added += 1
+            if added % 200 == 0:
+                db.session.commit()
+        db.session.commit()
+        flash(f'Imported {added:,} prospects. Skipped {skipped:,} duplicates.', 'success')
+        return redirect(url_for('prospects'))
+    import_html = '''<div class="card" style="max-width:600px;margin:0 auto">
+  <h2>Import Prospects from CSV</h2>
+  <p style="color:#555;font-size:13px;margin-bottom:14px">
+    Upload <code>NAT_Prospects_Full.csv</code>. Required column: <code>Company</code>.<br>
+    Optional: Email, Phone, Website, Address, Category, Source, Title, Description, Services, ICP Notes.
+  </p>
+  <form method="POST" enctype="multipart/form-data">
+    <div class="form-group">
+      <label>CSV File</label>
+      <input type="file" name="file" accept=".csv" required>
+    </div>
+    <button type="submit" class="btn btn-success">Import</button>
+    <a href="/prospects" class="btn btn-outline" style="margin-left:8px">Cancel</a>
+  </form>
+</div>'''
+    return base_page(import_html, 'prospects', 'Import Prospects')
+
+
+@app.route('/prospects/<int:pid>/delete', methods=['POST'])
+@login_required
+def prospect_delete(pid):
+    p = Prospect.query.get_or_404(pid)
+    db.session.delete(p)
+    db.session.commit()
+    flash('Prospect deleted.', 'success')
+    return redirect(url_for('prospects'))
+  
 
 
 @app.route('/logistics', methods=['GET','POST'])
